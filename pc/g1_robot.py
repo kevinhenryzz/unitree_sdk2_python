@@ -309,6 +309,21 @@ class G1Robot:
                 pass
             self.state.locomotion_stream_active = False
 
+    def emergency_stop(self):
+        """
+        Emergency stop: immediately stop all streams and damp the robot.
+
+        This is a safety command that bypasses normal shutdown sequence.
+        Use in emergencies when robot needs to stop immediately.
+        """
+        logger.warning("EMERGENCY STOP activated!")
+        self._client.stop_all()
+        self.state.locomotion_stream_active = False
+        self.state.booted = False
+        self._current_vx = 0
+        self._current_vy = 0
+        self._current_vyaw = 0
+
     # =========================================================================
     # Movement Commands
     # =========================================================================

@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import queue
+import signal
 import sys
 import threading
 import time
@@ -35,35 +36,24 @@ from unitree_sdk2py.core.channel import (
     ChannelSubscriber,
 )
 from unitree_sdk2py.g1.loco.g1_loco_client import LocoClient
-from unitree_sdk2py.utils.crc import CRC
+from unitree_sdk2py.g1.loco.g1_loco_api import ROBOT_API_ID_LOCO_SET_SWING_HEIGHT
 
 # IDL message types for G1 humanoid
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_ as HG_LowState_
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as HG_LowCmd_
-from unitree_sdk2py.idl.unitree_hg.msg.dds_ import IMUState_ as HG_IMUState_
-from unitree_sdk2py.idl.unitree_hg.msg.dds_ import MotorState_ as HG_MotorState_
+from unitree_sdk2py.idl.unitree_hg.msg.dds_ import BmsState_ as HG_BmsState_
+from unitree_sdk2py.idl.unitree_hg.msg.dds_ import HandState_ as HG_HandState_
 
 # IDL message types for navigation/odometry
 from unitree_sdk2py.idl.nav_msgs.msg.dds_ import Odometry_
-from unitree_sdk2py.idl.geometry_msgs.msg.dds_ import (
-    PoseWithCovariance_,
-    TwistWithCovariance_,
-    Pose_,
-    Twist_,
-    Point_,
-    Quaternion_,
-    Vector3_,
-)
-from unitree_sdk2py.idl.std_msgs.msg.dds_ import Header_, String_
+from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
 
-# IDL message types for GO series (SportModeState)
+# IDL message types for GO series (SportModeState, WirelessController)
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
+from unitree_sdk2py.idl.unitree_go.msg.dds_ import WirelessController_
 
 # IDL message types for point clouds (LiDAR)
 from unitree_sdk2py.idl.sensor_msgs.msg.dds_ import PointCloud2_
-
-# Default message instances for type registration
-from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 
 
 # Configure logging
@@ -137,6 +127,16 @@ class TopicRegistry:
         self.register("rt/lf/lowstate", HG_LowState_)  # Wireless controller variant
         self.register("rt/arm_sdk", HG_LowCmd_)  # Arm control
         self.register("rt/lowcmd", HG_LowCmd_)  # Low-level commands
+
+        # Battery Management System
+        self.register("rt/bms_state", HG_BmsState_)
+
+        # Hand state topics (Dex3 hands)
+        self.register("rt/left_hand/state", HG_HandState_)
+        self.register("rt/right_hand/state", HG_HandState_)
+
+        # Wireless controller input
+        self.register("rt/wirelesscontroller", WirelessController_)
 
         # Navigation/Odometry
         self.register("rt/utlidar/robot_odom", Odometry_)
@@ -472,7 +472,6 @@ class CommandExecutor:
 
     def __init__(self):
         self._loco_client: Optional[LocoClient] = None
-        self._crc = CRC()
 
         # Map of method names to (handler, requires_params)
         self._methods: Dict[str, tuple] = {
@@ -596,11 +595,13 @@ class CommandExecutor:
         return self._loco_client.SetStandHeight(height)
 
     def _set_swing_height(self, params: Dict[str, Any]) -> int:
+        """Set swing height using direct API call (not exposed in LocoClient)."""
+        import json as _json
         height = float(params["height"])
-        # Note: SetSwingHeight may not be implemented in all SDK versions
-        if hasattr(self._loco_client, 'SetSwingHeight'):
-            return self._loco_client.SetSwingHeight(height)
-        raise ValueError("SetSwingHeight not available in this SDK version")
+        p = {"data": height}
+        parameter = _json.dumps(p)
+        code, _ = self._loco_client._Call(ROBOT_API_ID_LOCO_SET_SWING_HEIGHT, parameter)
+        return code
 
     def _balance_stand(self, params: Dict[str, Any]) -> int:
         mode = int(params["mode"])
@@ -813,6 +814,9 @@ class BridgeServer:
             elif cmd_type == "status":
                 return self._handle_status()
 
+            elif cmd_type == "stop_all":
+                return self._handle_stop_all()
+
             else:
                 return {
                     "status": "error",
@@ -939,6 +943,42 @@ class BridgeServer:
             "subscriptions": self._subscription_manager.list_subscriptions(),
         }
 
+    def _handle_stop_all(self) -> Dict[str, Any]:
+        """
+        Emergency stop: stop all streams and damp the robot.
+
+        This is a safety command that:
+        1. Stops all active command streams
+        2. Calls Damp() to put robot in safe mode
+        """
+        errors = []
+
+        # Stop all streams
+        try:
+            stream_count = len(self._stream_manager.list_streams())
+            self._stream_manager.stop_all()
+            logger.info(f"Stopped {stream_count} streams")
+        except Exception as e:
+            errors.append(f"Failed to stop streams: {e}")
+            logger.error(f"Error stopping streams: {e}")
+
+        # Damp the robot
+        try:
+            self._executor.execute("Damp")
+            logger.info("Robot damped")
+        except Exception as e:
+            errors.append(f"Failed to damp robot: {e}")
+            logger.error(f"Error damping robot: {e}")
+
+        if errors:
+            return {
+                "status": "ok",
+                "warning": "Partial success",
+                "errors": errors
+            }
+
+        return {"status": "ok", "message": "All streams stopped, robot damped"}
+
     def _pub_loop(self):
         """Loop for publishing data to the PUB socket."""
         logger.info("Publisher thread started")
@@ -1026,6 +1066,16 @@ def main():
         pub_port=args.pub_port,
         heartbeat_hz=args.heartbeat_hz
     )
+
+    # Signal handlers for graceful shutdown
+    def signal_handler(signum, frame):
+        sig_name = signal.Signals(signum).name
+        logger.info(f"Received {sig_name}, initiating graceful shutdown...")
+        server.stop()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     try:
         server.start(network_interface=args.interface)

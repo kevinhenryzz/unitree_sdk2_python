@@ -455,6 +455,19 @@ class G1BridgeClient:
         """
         return self._send_command({"cmd": "status"})
 
+    def stop_all(self) -> Dict[str, Any]:
+        """
+        Emergency stop: stop all streams and damp the robot.
+
+        This is a safety command that:
+        1. Stops all active command streams
+        2. Calls Damp() to put robot in safe mode
+
+        Returns:
+            Response with status and any warnings/errors
+        """
+        return self._send_command({"cmd": "stop_all"})
+
     # =========================================================================
     # Callback Registration
     # =========================================================================
