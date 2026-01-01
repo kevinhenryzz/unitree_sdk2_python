@@ -110,59 +110,149 @@ def dataclass_to_dict(obj: Any) -> Any:
 # Topic Registry
 # =============================================================================
 
+# Known message types that can be registered
+# Maps type name string to actual IDL class
+KNOWN_MSG_TYPES: Dict[str, Type] = {
+    # G1 Humanoid (unitree_hg)
+    "LowState": HG_LowState_,
+    "LowCmd": HG_LowCmd_,
+    "BmsState": HG_BmsState_,
+    "HandState": HG_HandState_,
+
+    # GO series (unitree_go)
+    "SportModeState": SportModeState_,
+    "WirelessController": WirelessController_,
+
+    # Navigation
+    "Odometry": Odometry_,
+
+    # Sensor
+    "PointCloud2": PointCloud2_,
+
+    # Standard
+    "String": String_,
+}
+
+# Documentation of known G1 topics and their types
+# This is informational - users must register topics they want to use
+KNOWN_G1_TOPICS: Dict[str, Dict[str, str]] = {
+    "rt/lowstate": {
+        "type": "LowState",
+        "description": "Robot state: joints, IMU, motors (always available)",
+    },
+    "rt/lf/lowstate": {
+        "type": "LowState",
+        "description": "Low state via wireless controller path",
+    },
+    "rt/arm_sdk": {
+        "type": "LowCmd",
+        "description": "Arm control commands (if arms enabled)",
+    },
+    "rt/lowcmd": {
+        "type": "LowCmd",
+        "description": "Low-level motor commands",
+    },
+    "rt/bms_state": {
+        "type": "BmsState",
+        "description": "Battery management system state",
+    },
+    "rt/left_hand/state": {
+        "type": "HandState",
+        "description": "Left Dex3 hand state (if equipped)",
+    },
+    "rt/right_hand/state": {
+        "type": "HandState",
+        "description": "Right Dex3 hand state (if equipped)",
+    },
+    "rt/wirelesscontroller": {
+        "type": "WirelessController",
+        "description": "Wireless controller input (if connected)",
+    },
+    "rt/utlidar/robot_odom": {
+        "type": "Odometry",
+        "description": "Robot odometry from LiDAR (if LiDAR enabled)",
+    },
+    "rt/odom": {
+        "type": "Odometry",
+        "description": "Robot odometry",
+    },
+    "rt/sportmodestate": {
+        "type": "SportModeState",
+        "description": "Sport mode locomotion state",
+    },
+    "rt/utlidar/cloud": {
+        "type": "PointCloud2",
+        "description": "LiDAR point cloud (if LiDAR enabled)",
+    },
+    "rt/utlidar/switch": {
+        "type": "String",
+        "description": "LiDAR on/off control",
+    },
+}
+
+
 class TopicRegistry:
     """
-    Registry of known DDS topics and their message types.
-    Pre-registers all supported topics for G1.
+    Registry for DDS topics. Topics must be registered before subscribing.
+
+    No topics are pre-registered. Users register topics they need using
+    the register_topic command with a known message type.
     """
 
     def __init__(self):
         self._topics: Dict[str, Type] = {}
-        self._register_default_topics()
 
-    def _register_default_topics(self):
-        """Register all supported G1 topics."""
-        # G1 Humanoid topics (unitree_hg)
-        self.register("rt/lowstate", HG_LowState_)
-        self.register("rt/lf/lowstate", HG_LowState_)  # Wireless controller variant
-        self.register("rt/arm_sdk", HG_LowCmd_)  # Arm control
-        self.register("rt/lowcmd", HG_LowCmd_)  # Low-level commands
+    def register(self, topic_name: str, msg_type_name: str) -> bool:
+        """
+        Register a topic with a message type.
 
-        # Battery Management System
-        self.register("rt/bms_state", HG_BmsState_)
+        Args:
+            topic_name: DDS topic name (e.g., "rt/lowstate")
+            msg_type_name: Known message type name (e.g., "LowState")
 
-        # Hand state topics (Dex3 hands)
-        self.register("rt/left_hand/state", HG_HandState_)
-        self.register("rt/right_hand/state", HG_HandState_)
+        Returns:
+            True if registered successfully
 
-        # Wireless controller input
-        self.register("rt/wirelesscontroller", WirelessController_)
+        Raises:
+            ValueError: If message type is unknown
+        """
+        if msg_type_name not in KNOWN_MSG_TYPES:
+            raise ValueError(
+                f"Unknown message type '{msg_type_name}'. "
+                f"Available types: {list(KNOWN_MSG_TYPES.keys())}"
+            )
 
-        # Navigation/Odometry
-        self.register("rt/utlidar/robot_odom", Odometry_)
-        self.register("rt/odom", Odometry_)
-
-        # Sport mode state (GO series compatible)
-        self.register("rt/sportmodestate", SportModeState_)
-
-        # LiDAR topics
-        self.register("rt/utlidar/cloud", PointCloud2_)
-        self.register("rt/utlidar/switch", String_)
-
-        logger.info(f"Registered {len(self._topics)} default topics")
-
-    def register(self, topic_name: str, msg_type: Type):
-        """Register a topic with its message type."""
+        msg_type = KNOWN_MSG_TYPES[msg_type_name]
         self._topics[topic_name] = msg_type
-        logger.debug(f"Registered topic: {topic_name} -> {msg_type.__name__}")
+        logger.info(f"Registered topic: {topic_name} -> {msg_type_name}")
+        return True
+
+    def unregister(self, topic_name: str) -> bool:
+        """Unregister a topic."""
+        if topic_name in self._topics:
+            del self._topics[topic_name]
+            logger.info(f"Unregistered topic: {topic_name}")
+            return True
+        return False
 
     def get_type(self, topic_name: str) -> Optional[Type]:
-        """Get the message type for a topic."""
+        """Get the message type for a registered topic."""
         return self._topics.get(topic_name)
 
     def list_topics(self) -> List[str]:
         """List all registered topics."""
         return list(self._topics.keys())
+
+    def list_topics_with_types(self) -> Dict[str, str]:
+        """List registered topics with their type names."""
+        result = {}
+        for topic, msg_type in self._topics.items():
+            # Find type name from KNOWN_MSG_TYPES
+            for name, cls in KNOWN_MSG_TYPES.items():
+                if cls == msg_type:
+                    result[topic] = name
+                    break
+        return result
 
 
 # =============================================================================
@@ -799,8 +889,20 @@ class BridgeServer:
             elif cmd_type == "call":
                 return self._handle_call(cmd)
 
+            elif cmd_type == "register_topic":
+                return self._handle_register_topic(cmd)
+
+            elif cmd_type == "unregister_topic":
+                return self._handle_unregister_topic(cmd)
+
             elif cmd_type == "list_topics":
                 return self._handle_list_topics()
+
+            elif cmd_type == "list_known_topics":
+                return self._handle_list_known_topics()
+
+            elif cmd_type == "list_msg_types":
+                return self._handle_list_msg_types()
 
             elif cmd_type == "list_methods":
                 return self._handle_list_methods()
@@ -906,11 +1008,54 @@ class BridgeServer:
         result = self._executor.execute(method, params)
         return {"status": "ok", "result": result}
 
+    def _handle_register_topic(self, cmd: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle register_topic command."""
+        topic = cmd.get("topic")
+        msg_type = cmd.get("msg_type")
+
+        if not topic:
+            raise ValueError("topic is required")
+        if not msg_type:
+            raise ValueError("msg_type is required")
+
+        self._topic_registry.register(topic, msg_type)
+        return {"status": "ok", "topic": topic, "msg_type": msg_type}
+
+    def _handle_unregister_topic(self, cmd: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle unregister_topic command."""
+        topic = cmd.get("topic")
+
+        if not topic:
+            raise ValueError("topic is required")
+
+        # Also unsubscribe if subscribed
+        try:
+            self._subscription_manager.unsubscribe(topic)
+        except ValueError:
+            pass  # Not subscribed, that's fine
+
+        self._topic_registry.unregister(topic)
+        return {"status": "ok", "topic": topic}
+
     def _handle_list_topics(self) -> Dict[str, Any]:
-        """Handle list_topics command."""
+        """Handle list_topics command - shows registered topics."""
         return {
             "status": "ok",
-            "topics": self._topic_registry.list_topics()
+            "topics": self._topic_registry.list_topics_with_types()
+        }
+
+    def _handle_list_known_topics(self) -> Dict[str, Any]:
+        """Handle list_known_topics command - shows available G1 topics for reference."""
+        return {
+            "status": "ok",
+            "known_topics": KNOWN_G1_TOPICS
+        }
+
+    def _handle_list_msg_types(self) -> Dict[str, Any]:
+        """Handle list_msg_types command - shows available message types."""
+        return {
+            "status": "ok",
+            "msg_types": list(KNOWN_MSG_TYPES.keys())
         }
 
     def _handle_list_methods(self) -> Dict[str, Any]:

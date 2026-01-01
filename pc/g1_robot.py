@@ -254,14 +254,18 @@ class G1Robot:
         )
         self.state.locomotion_stream_active = True
 
-        # Subscribe to topics if requested
+        # Register and subscribe to topics if requested
         if subscribe_topics and self._auto_subscribe:
+            # Register and subscribe to low state (always available)
             try:
+                self._client.register_topic(self.TOPIC_LOW_STATE, "LowState")
                 self._client.subscribe(self.TOPIC_LOW_STATE, hz=self._state_hz)
             except BridgeError as e:
                 logger.warning(f"Could not subscribe to {self.TOPIC_LOW_STATE}: {e}")
 
+            # Register and subscribe to odometry (may not be available if LiDAR off)
             try:
+                self._client.register_topic(self.TOPIC_ODOMETRY, "Odometry")
                 self._client.subscribe(self.TOPIC_ODOMETRY, hz=self._state_hz)
             except BridgeError as e:
                 logger.warning(f"Could not subscribe to {self.TOPIC_ODOMETRY}: {e}")
@@ -468,9 +472,25 @@ class G1Robot:
     # Topic Subscriptions
     # =========================================================================
 
+    def register_topic(self, topic: str, msg_type: str):
+        """
+        Register a topic with a message type before subscribing.
+
+        Args:
+            topic: Topic name (e.g., "rt/lowstate")
+            msg_type: Message type name (e.g., "LowState")
+
+        Example:
+            robot.register_topic("rt/bms_state", "BmsState")
+            robot.subscribe("rt/bms_state", hz=1)
+        """
+        self._client.register_topic(topic, msg_type)
+
     def subscribe(self, topic: str, hz: float = 10):
         """
-        Subscribe to a DDS topic.
+        Subscribe to a registered DDS topic.
+
+        Note: Topic must be registered first with register_topic().
 
         Args:
             topic: Topic name
@@ -486,6 +506,24 @@ class G1Robot:
             topic: Topic name
         """
         self._client.unsubscribe(topic)
+
+    def list_known_topics(self) -> Dict[str, Dict[str, str]]:
+        """
+        List known G1 topics for reference.
+
+        Returns:
+            Dict with topic info including type and description
+        """
+        return self._client.list_known_topics()
+
+    def list_msg_types(self) -> List[str]:
+        """
+        List available message types.
+
+        Returns:
+            List of message type names for use with register_topic()
+        """
+        return self._client.list_msg_types()
 
     def on_topic(self, topic: str, callback: Callable[[Dict[str, Any]], None]):
         """

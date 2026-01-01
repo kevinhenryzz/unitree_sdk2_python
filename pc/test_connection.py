@@ -39,13 +39,43 @@ def test_ping(client: G1BridgeClient) -> bool:
 
 
 def test_list_topics(client: G1BridgeClient) -> bool:
-    """Test listing available topics."""
-    print("\n=== Test: List Topics ===")
+    """Test listing registered topics (should be empty initially)."""
+    print("\n=== Test: List Registered Topics ===")
     try:
         topics = client.list_topics()
-        print(f"  Found {len(topics)} topics:")
-        for topic in topics:
-            print(f"    - {topic}")
+        print(f"  Found {len(topics)} registered topics:")
+        for topic, msg_type in topics.items():
+            print(f"    - {topic} ({msg_type})")
+        if len(topics) == 0:
+            print("  (No topics registered yet - this is expected)")
+        return True
+    except BridgeError as e:
+        print(f"  FAILED: {e}")
+        return False
+
+
+def test_list_known_topics(client: G1BridgeClient) -> bool:
+    """Test listing known G1 topics for reference."""
+    print("\n=== Test: List Known G1 Topics ===")
+    try:
+        known = client.list_known_topics()
+        print(f"  Found {len(known)} known topics:")
+        for topic, info in known.items():
+            print(f"    - {topic}: {info['type']} - {info['description']}")
+        return True
+    except BridgeError as e:
+        print(f"  FAILED: {e}")
+        return False
+
+
+def test_list_msg_types(client: G1BridgeClient) -> bool:
+    """Test listing available message types."""
+    print("\n=== Test: List Message Types ===")
+    try:
+        types = client.list_msg_types()
+        print(f"  Found {len(types)} message types:")
+        for t in types:
+            print(f"    - {t}")
         return True
     except BridgeError as e:
         print(f"  FAILED: {e}")
@@ -79,6 +109,10 @@ def test_subscribe(client: G1BridgeClient, topic: str = "rt/lowstate") -> bool:
     try:
         # Register callback
         client.on_topic(topic, on_data)
+
+        # Register topic first (required before subscribing)
+        client.register_topic(topic, "LowState")
+        print(f"  Registered topic {topic} with type LowState")
 
         # Subscribe
         client.subscribe(topic, hz=5)
@@ -218,6 +252,8 @@ def main():
 
         # Run tests
         results["ping"] = test_ping(client)
+        results["list_known_topics"] = test_list_known_topics(client)
+        results["list_msg_types"] = test_list_msg_types(client)
         results["list_topics"] = test_list_topics(client)
         results["list_methods"] = test_list_methods(client)
         results["status"] = test_status(client)

@@ -406,15 +406,71 @@ class G1BridgeClient:
             "topic": topic
         })
 
-    def list_topics(self) -> List[str]:
+    def register_topic(self, topic: str, msg_type: str) -> Dict[str, Any]:
         """
-        List all available topics.
+        Register a topic with a message type before subscribing.
+
+        Args:
+            topic: Topic name (e.g., "rt/lowstate")
+            msg_type: Message type name (e.g., "LowState")
 
         Returns:
-            List of topic names
+            Response with status
+
+        Example:
+            client.register_topic("rt/lowstate", "LowState")
+            client.subscribe("rt/lowstate", hz=10)
+        """
+        return self._send_command({
+            "cmd": "register_topic",
+            "topic": topic,
+            "msg_type": msg_type
+        })
+
+    def unregister_topic(self, topic: str) -> Dict[str, Any]:
+        """
+        Unregister a topic (also unsubscribes if subscribed).
+
+        Args:
+            topic: Topic name
+
+        Returns:
+            Response with status
+        """
+        return self._send_command({
+            "cmd": "unregister_topic",
+            "topic": topic
+        })
+
+    def list_topics(self) -> Dict[str, str]:
+        """
+        List all registered topics with their message types.
+
+        Returns:
+            Dict mapping topic names to message type names
         """
         response = self._send_command({"cmd": "list_topics"})
-        return response.get("topics", [])
+        return response.get("topics", {})
+
+    def list_known_topics(self) -> Dict[str, Dict[str, str]]:
+        """
+        List known G1 topics for reference (not registered, just documentation).
+
+        Returns:
+            Dict of topic info: {topic: {"type": "...", "description": "..."}}
+        """
+        response = self._send_command({"cmd": "list_known_topics"})
+        return response.get("known_topics", {})
+
+    def list_msg_types(self) -> List[str]:
+        """
+        List available message types that can be used with register_topic.
+
+        Returns:
+            List of message type names
+        """
+        response = self._send_command({"cmd": "list_msg_types"})
+        return response.get("msg_types", [])
 
     def list_methods(self) -> List[str]:
         """

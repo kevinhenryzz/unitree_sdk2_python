@@ -143,11 +143,13 @@ client.stream_create("locomotion", "Move",
 # Update stream parameters (only sends when values change)
 client.stream_update("locomotion", {"vx": 0.5})
 
-# Subscribe to topics
+# Subscribe to topics (must register first!)
 def on_lowstate(data):
     imu = data["data"]["imu_state"]
     print(f"IMU: {imu['rpy']}")
 
+# Register topic with message type, then subscribe
+client.register_topic("rt/lowstate", "LowState")
 client.on_topic("rt/lowstate", on_lowstate)
 client.subscribe("rt/lowstate", hz=10)
 
@@ -156,19 +158,67 @@ client.stream_stop("locomotion")
 client.disconnect()
 ```
 
-## Available Topics
+## Topic Registration
 
-| Topic | Message Type | Description |
-|-------|--------------|-------------|
-| `rt/lowstate` | `unitree_hg.LowState_` | Joint states, IMU, motor feedback |
-| `rt/lf/lowstate` | `unitree_hg.LowState_` | Wireless controller variant |
-| `rt/arm_sdk` | `unitree_hg.LowCmd_` | Arm control (publish only) |
-| `rt/lowcmd` | `unitree_hg.LowCmd_` | Low-level commands |
-| `rt/utlidar/robot_odom` | `nav_msgs.Odometry_` | Robot odometry from LiDAR |
-| `rt/odom` | `nav_msgs.Odometry_` | Odometry |
-| `rt/sportmodestate` | `unitree_go.SportModeState_` | Sport mode state |
-| `rt/utlidar/cloud` | `sensor_msgs.PointCloud2_` | LiDAR point cloud |
-| `rt/utlidar/switch` | `std_msgs.String_` | LiDAR control |
+**Important:** Topics are NOT pre-registered. You must register topics before subscribing.
+
+This design is intentional because:
+- DDS topics are hardware/mode dependent (LiDAR may be off, hands not equipped, etc.)
+- Pre-registering creates false expectations
+- You know your G1 configuration better than the bridge does
+
+### Registration Flow
+
+```python
+# 1. List known G1 topics (for reference)
+known = client.list_known_topics()
+# Returns: {"rt/lowstate": {"type": "LowState", "description": "..."}, ...}
+
+# 2. List available message types
+types = client.list_msg_types()
+# Returns: ["LowState", "LowCmd", "Odometry", ...]
+
+# 3. Register topics you want to use
+client.register_topic("rt/lowstate", "LowState")
+client.register_topic("rt/bms_state", "BmsState")
+
+# 4. Now you can subscribe
+client.subscribe("rt/lowstate", hz=10)
+```
+
+## Known G1 Topics
+
+These topics are documented for reference. Register only the ones you need.
+
+| Topic | Type | Description |
+|-------|------|-------------|
+| `rt/lowstate` | `LowState` | Robot state: joints, IMU, motors (always available) |
+| `rt/lf/lowstate` | `LowState` | Low state via wireless controller path |
+| `rt/arm_sdk` | `LowCmd` | Arm control commands (if arms enabled) |
+| `rt/lowcmd` | `LowCmd` | Low-level motor commands |
+| `rt/bms_state` | `BmsState` | Battery management system state |
+| `rt/left_hand/state` | `HandState` | Left Dex3 hand state (if equipped) |
+| `rt/right_hand/state` | `HandState` | Right Dex3 hand state (if equipped) |
+| `rt/wirelesscontroller` | `WirelessController` | Wireless controller input (if connected) |
+| `rt/utlidar/robot_odom` | `Odometry` | Robot odometry from LiDAR (if enabled) |
+| `rt/odom` | `Odometry` | Robot odometry |
+| `rt/sportmodestate` | `SportModeState` | Sport mode locomotion state |
+| `rt/utlidar/cloud` | `PointCloud2` | LiDAR point cloud (if enabled) |
+| `rt/utlidar/switch` | `String` | LiDAR on/off control |
+
+## Available Message Types
+
+| Type | Description |
+|------|-------------|
+| `LowState` | G1 joint states, IMU, motor feedback |
+| `LowCmd` | G1 motor commands |
+| `BmsState` | Battery management state |
+| `HandState` | Dex3 hand state |
+| `SportModeState` | Locomotion mode state |
+| `WirelessController` | Controller joystick/button input |
+| `Odometry` | Position/velocity odometry |
+| `PointCloud2` | LiDAR point cloud |
+| `String` | Simple string message |
 
 ## Available Commands
 
@@ -218,27 +268,38 @@ client.stream_stop("locomotion")
 ### PC → Bridge (REQ-REP)
 
 ```json
+// Topic registration (required before subscribing)
+{"cmd": "register_topic", "topic": "rt/lowstate", "msg_type": "LowState"}
+{"cmd": "unregister_topic", "topic": "rt/lowstate"}
+
+// Topic subscriptions (topic must be registered first)
+{"cmd": "subscribe", "topic": "rt/lowstate", "hz": 10}
+{"cmd": "unsubscribe", "topic": "rt/lowstate"}
+
 // Stream management
 {"cmd": "stream_create", "stream_id": "locomotion", "method": "Move",
  "params": {"vx": 0, "vy": 0, "vyaw": 0}, "hz": 50}
 {"cmd": "stream_update", "stream_id": "locomotion", "params": {"vx": 0.5}}
 {"cmd": "stream_stop", "stream_id": "locomotion"}
 
-// Topic subscriptions
-{"cmd": "subscribe", "topic": "rt/lowstate", "hz": 10}
-{"cmd": "unsubscribe", "topic": "rt/lowstate"}
-
 // One-shot commands
 {"cmd": "call", "method": "Start"}
 {"cmd": "call", "method": "Move", "params": {"vx": 0.5, "vy": 0, "vyaw": 0}}
 
-// Utilities
+// Emergency stop
+{"cmd": "stop_all"}
+
+// Discovery
+{"cmd": "list_known_topics"}  // Reference list of G1 topics
+{"cmd": "list_msg_types"}     // Available message types
+{"cmd": "list_topics"}        // Currently registered topics
+{"cmd": "list_methods"}       // Available robot commands
+
+// Status
 {"cmd": "ping"}
-{"cmd": "list_topics"}
-{"cmd": "list_methods"}
+{"cmd": "status"}
 {"cmd": "list_streams"}
 {"cmd": "list_subscriptions"}
-{"cmd": "status"}
 ```
 
 ### Bridge → PC Responses
